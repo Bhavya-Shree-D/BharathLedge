@@ -42,6 +42,12 @@ FRED_RETRY_DELAY     = 5
 
 
 def _load_env() -> dict:
+    import os
+    # In GitHub Actions, secrets are injected as env vars directly
+    if os.environ.get("FRED_API_KEY"):
+        return {"FRED_API_KEY": os.environ["FRED_API_KEY"]}
+    
+    # Local development — fall back to .env file
     env_path = PROJECT_ROOT / ".env"
     config   = dotenv_values(env_path)
     if not config.get("FRED_API_KEY"):
