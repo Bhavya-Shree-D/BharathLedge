@@ -26,6 +26,17 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Debug — check data files exist
+        run: |
+          echo "=== Repo root ==="
+          ls -la
+          echo "=== data/ folder ==="
+          ls -la data/ || echo "data/ folder does not exist"
+          echo "=== data/raw/ ==="
+          ls -la data/raw/ || echo "data/raw/ does not exist"
+          echo "=== data/processed/ ==="
+          ls -la data/processed/ || echo "data/processed/ does not exist"
+
       - name: Run daily update pipeline
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
