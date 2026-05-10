@@ -1,0 +1,46 @@
+name: Weekly Model Retrain
+
+on:
+  schedule:
+    # Every Sunday at 01:00 UTC = 06:30 IST
+    - cron: "0 1 * * 0"
+  workflow_dispatch:
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run weekly retrain pipeline
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python scripts/retrain.py
+
+      - name: Commit updated parquet files and models
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/raw/yfinance.parquet \
+                  data/raw/fred.parquet \
+                  data/processed/aligned.parquet \
+                  data/processed/features.parquet \
+                  data/processed/targets.parquet \
+                  data/processed/evaluation.csv \
+                  models/
+          git diff --cached --quiet || git commit -m "chore: weekly retrain $(date -u '+%Y-%m-%d')"
+          git push

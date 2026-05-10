@@ -44,8 +44,8 @@ def handle_callback():
     params = st.query_params
     if "code" in params:
         try:
-            # Supabase exchanges the code automatically via session
-            session = supabase.auth.get_session()
+            code = params["code"]
+            session = supabase.auth.exchange_code_for_session({"auth_code": code})  
             if session and session.user:
                 _set_session(session.user)
                 st.query_params.clear()
@@ -53,6 +53,8 @@ def handle_callback():
         except Exception as e:
             st.error(f"Google login error: {e}")
             st.query_params.clear()
+        
+       
 
     # Restore session if already logged in (page refresh)
     if not st.session_state.logged_in:

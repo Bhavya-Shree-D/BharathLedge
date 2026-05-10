@@ -1,0 +1,44 @@
+name: Daily Data Update
+
+on:
+  schedule:
+    # 00:30 UTC = 06:00 IST (UTC+5:30)
+    - cron: "30 0 * * 1-5"   # weekdays only — markets closed on weekends
+  workflow_dispatch:           # allows manual trigger from GitHub UI
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run daily update pipeline
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python scripts/daily_update.py
+
+      - name: Commit updated parquet files
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/raw/yfinance.parquet \
+                  data/raw/fred.parquet \
+                  data/processed/aligned.parquet \
+                  data/processed/features.parquet \
+                  data/processed/targets.parquet
+          git diff --cached --quiet || git commit -m "chore: daily data update $(date -u '+%Y-%m-%d')"
+          git push
