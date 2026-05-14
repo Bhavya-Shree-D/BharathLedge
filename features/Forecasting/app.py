@@ -1,6 +1,7 @@
 # features/Forecasting/app.py
 
 import datetime
+from pathlib import Path
 import streamlit as st
 import pandas as pd
 from features.Forecasting.predict import run_predict
@@ -20,27 +21,23 @@ _CONFIDENCE = {
 }
 
 
-@st.cache_data(ttl=86400)  # refresh pipeline at most once per day
-def _refresh_pipeline() -> str | None:
-    """
-    Runs the daily data update pipeline (ingest → align → features).
-    Returns an error message string if it fails, None on success.
-    Cached for 24 hours so it does not re-run on every Streamlit rerun.
-    """
+@st.cache_data(ttl=3600)
+def _check_data_staleness() -> int:
+    """Returns how many days old the features file is. No API calls."""
     try:
-        from features.Forecasting.ingest import run_daily_update
-        from features.Forecasting.align import run_alignment
-        from features.Forecasting.features import run_feature_engineering
+        features_path = (
+            Path(__file__).resolve().parents[2]
+            / "data" / "processed" / "features.parquet"
+        )
+        if not features_path.exists():
+            return 999
+        modified = datetime.date.fromtimestamp(features_path.stat().st_mtime)
+        return (datetime.date.today() - modified).days
+    except Exception:
+        return 999
 
-        run_daily_update()
-        run_alignment()
-        run_feature_engineering()
-        return None
-    except Exception as e:
-        return str(e)
 
-
-@st.cache_data(ttl=3600)  # cache predictions for 1 hour
+@st.cache_data(ttl=3600)
 def _get_predictions() -> pd.DataFrame:
     return run_predict()
 
@@ -54,12 +51,13 @@ def render(db, T: dict) -> None:
         unsafe_allow_html=True,
     )
 
-    # ── Refresh pipeline data (once per day) ──────────────────
-    pipeline_error = _refresh_pipeline()
-    if pipeline_error:
+    # ── Staleness warning (no API calls — just checks file mtime) ──
+    staleness_days = _check_data_staleness()
+    if staleness_days > 5:
         st.warning(
-            f"⚠️ Daily data refresh failed — showing last available data. "
-            f"Reason: {pipeline_error}"
+            f"⚠️ Data is {staleness_days} days old. "
+            "The daily pipeline may not have run recently. "
+            "Showing last available predictions."
         )
 
     # ── Load predictions ───────────────────────────────────────
@@ -72,19 +70,6 @@ def render(db, T: dict) -> None:
             return
 
     as_of = df["as_of_date"].iloc[0]
-
-    # Warn if the data is more than 5 calendar days old
-    try:
-        staleness_days = (datetime.date.today() - as_of).days
-        if staleness_days > 5:
-            st.warning(
-                f"⚠️ Data is {staleness_days} days old (as of {as_of}). "
-                "FRED may be delayed or the pipeline failed to update. "
-                "Try restarting the app or running the pipeline manually."
-            )
-    except Exception:
-        pass
-
     st.caption(f"Predictions as of **{as_of}** · Cached for 1 hour · Powered by LightGBM")
 
     # ── Pair selector ──────────────────────────────────────────
@@ -165,7 +150,7 @@ def render(db, T: dict) -> None:
         "but past performance does not guarantee future results."
     )
 
-    # Log to history 
+    # ── Log to history ─────────────────────────────────────────
     try:
         email = st.session_state.get("user_email", "")
         if email:
