@@ -3,6 +3,7 @@
 # Note: BRENT is NOT fetched — it is not used as a model feature.
 
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -35,19 +36,22 @@ FRED_MACRO_SERIES = {
     "IRLTLT01DEM156N": "DE10Y",
 }
 
+# Series that are published monthly and may return empty for short lookback windows.
+MONTHLY_SERIES = {"IRLTLT01DEM156N"}
+
 HISTORY_START        = "2012-01-01"
 UPDATE_LOOKBACK_DAYS = 40
+MONTHLY_LOOKBACK_DAYS = 120   # monthly series have publication lag of up to 3 months
 FRED_MAX_RETRIES     = 3
 FRED_RETRY_DELAY     = 5
 
 
 def _load_env() -> dict:
-    import os
-    # In GitHub Actions, secrets are injected as env vars directly
+    # In GitHub Actions, secrets are injected as env vars directly.
     if os.environ.get("FRED_API_KEY"):
         return {"FRED_API_KEY": os.environ["FRED_API_KEY"]}
-    
-    # Local development — fall back to .env file
+
+    # Local development — fall back to .env file.
     env_path = PROJECT_ROOT / ".env"
     config   = dotenv_values(env_path)
     if not config.get("FRED_API_KEY"):
@@ -68,18 +72,28 @@ def _fetch_fred_series(series_map: dict, start: str, end: str, fred: Fred) -> pd
                 series = fred.get_series(
                     series_id, observation_start=start, observation_end=end
                 )
-                if series.empty:
+
+                # Monthly series may legitimately return empty for short windows
+                # (publication lag). Warn and store empty — run_daily_update will
+                # merge with existing data so no history is lost.
+                if series.empty or series.isna().all():
+                    if series_id in MONTHLY_SERIES:
+                        log.warning(
+                            "FRED returned empty/NaN for monthly series %s "
+                            "(publication lag likely) — skipping, existing data retained.",
+                            series_id,
+                        )
+                        frames[col_name] = pd.Series(dtype=float)
+                        last_error = None
+                        break
                     raise ValueError(
                         f"FRED returned empty data for {series_id}. "
                         "Check your API key and FRED availability."
                     )
-                if series.isna().all():
-                    raise ValueError(
-                        f"FRED returned all-NaN data for {series_id}. "
-                        "Possible FRED outage or invalid series ID."
-                    )
+
                 last_error = None
                 break
+
             except Exception as e:
                 last_error = e
                 if attempt < FRED_MAX_RETRIES - 1:
@@ -93,7 +107,7 @@ def _fetch_fred_series(series_map: dict, start: str, end: str, fred: Fred) -> pd
             raise ValueError(
                 f"FRED fetch failed for {series_id} after {FRED_MAX_RETRIES} attempts: {last_error}"
             )
-        frames[col_name] = series
+        frames[col_name] = frames.get(col_name, series)
 
     df = pd.DataFrame(frames)
     df.index = pd.to_datetime(df.index)
@@ -183,16 +197,18 @@ def run_daily_update() -> None:
     log.info("=== Daily update started ===")
 
     if not PRICES_PATH.exists() or not FRED_PATH.exists():
-        raise FileNotFoundError(
-            "Raw parquet files not found. Run run_full_ingest() first."
-        )
+        log.warning("Raw parquet files not found — running full ingest as fallback.")
+        run_full_ingest()
+        return
 
     config = _load_env()
     fred   = Fred(api_key=config["FRED_API_KEY"])
 
-    start = (pd.Timestamp.today() - pd.Timedelta(days=UPDATE_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
-    end   = pd.Timestamp.today().strftime("%Y-%m-%d")
+    end          = pd.Timestamp.today().strftime("%Y-%m-%d")
+    start        = (pd.Timestamp.today() - pd.Timedelta(days=UPDATE_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+    start_macro  = (pd.Timestamp.today() - pd.Timedelta(days=MONTHLY_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
 
+    # --- prices (daily series) ---
     old_prices = pd.read_parquet(PRICES_PATH, engine="pyarrow")
     new_prices = _build_prices_df(start, end, fred)
     merged     = _dedup_sort(pd.concat([old_prices, new_prices]))
@@ -203,12 +219,15 @@ def run_daily_update() -> None:
         log.info("No new price rows today — market may be closed or FRED not yet updated.")
     _write_parquet(merged, PRICES_PATH)
 
+    # --- macro (includes monthly series — use longer lookback to avoid empty returns) ---
     old_macro    = pd.read_parquet(FRED_PATH, engine="pyarrow")
-    new_macro    = _fetch_fred_series(FRED_MACRO_SERIES, start, end, fred)
+    new_macro    = _fetch_fred_series(FRED_MACRO_SERIES, start_macro, end, fred)
     merged_macro = _dedup_sort(pd.concat([old_macro, new_macro]))
     new_mac_rows = len(merged_macro) - len(old_macro)
     if new_mac_rows > 0:
         log.info("Daily update added %d new row(s) to macro.", new_mac_rows)
+    else:
+        log.info("No new macro rows today.")
     _write_parquet(merged_macro, FRED_PATH)
 
     log.info("=== Daily update complete ===")
