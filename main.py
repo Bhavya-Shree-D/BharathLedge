@@ -27,6 +27,7 @@ st.set_page_config(
 )
 
 #  LOAD CSS 
+@st.cache_data
 def _load_css(path: Path) -> None:
     with open(path, "r", encoding="utf-8") as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
@@ -102,7 +103,11 @@ _username : str  = st.session_state.get("username") or "User"
 
 # Build _T dynamically from the active language. Cached at translator level,
 # so repeated calls in the same language are free.
-_T : dict = {k: t(v) for k, v in _UI_TEXT_DEFAULT.items()}
+@st.cache_data
+def _build_translations(language: str) -> dict:
+    return {k: t(v) for k, v in _UI_TEXT_DEFAULT.items()}
+
+_T = _build_translations(st.session_state["language"])
 
 # Upsert only once per session — not on every rerun
 if not st.session_state.get("_user_synced"):
@@ -351,7 +356,7 @@ def _back_btn() -> None:
 
 _reg = get_feature_registry()
 
-# Trends 
+# Trends
 if st.session_state["current_page"] == "trends":
     _back_btn()
     _reg["trends"](db=db, T=_T)
@@ -361,7 +366,7 @@ elif st.session_state["current_page"] == "qa":
     _back_btn()
     _reg["qa"](db=db, T=_T)
 
-# Currency Calculator 
+# Currency Calculator
 elif st.session_state["current_page"] == "calculator":
     _back_btn()
     _reg["calculator"](db=db, T=_T)
@@ -374,8 +379,7 @@ elif st.session_state["current_page"] == "forecast":
 # History
 elif st.session_state["current_page"] == "history":
     _back_btn()
-    from features.History.app import render as render_history
-    render_history(db=db, T=_T)
+    _reg["history"](db=db, T=_T)
 
 # Multilingual & Voice
 elif st.session_state["current_page"] == "multilingual":
@@ -387,5 +391,4 @@ elif st.session_state["current_page"] == "multilingual":
         '</div>',
         unsafe_allow_html=True
     )
-    from features.Multilingual.chat import render as render_multilingual
-    render_multilingual()
+    _reg["multilingual"]()
