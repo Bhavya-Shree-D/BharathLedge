@@ -40,7 +40,13 @@ jobs:
       - name: Run daily update pipeline
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: python scripts/daily_update.py
+
+      - name: Debug key length
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: echo "FRED key length is ${#FRED_API_KEY}"
 
       - name: Commit updated parquet files
         run: |

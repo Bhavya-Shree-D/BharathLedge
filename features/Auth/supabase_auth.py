@@ -15,6 +15,8 @@ def _init_state():
         "user_email": "",
         "user_name": "",
         "auth0_sub": "",  # kept for DB compatibility — we'll store Supabase UID here
+        "_show_reset_form": False,
+        "_reset_result": None,
     }.items():
         if k not in st.session_state:
             st.session_state[k] = v
@@ -24,13 +26,13 @@ def _set_session(user):
     """Populate session state from Supabase user object."""
     st.session_state.logged_in  = True
     st.session_state.user_email = user.email or ""
-    st.session_state.auth0_sub  = user.id          # Supabase UUID, same role as auth0_sub
+    st.session_state.auth0_sub  = user.id
     st.session_state.user_name  = (
         (user.user_metadata or {}).get("full_name")
         or (user.user_metadata or {}).get("name")
         or (user.email or "").split("@")[0]
     )
-    st.session_state.username   = st.session_state.user_name
+    st.session_state.username = st.session_state.user_name
 
 
 def handle_callback():
@@ -40,12 +42,11 @@ def handle_callback():
     """
     _init_state()
 
-    # Check if returning from Google OAuth redirect
     params = st.query_params
     if "code" in params:
         try:
             code = params["code"]
-            session = supabase.auth.exchange_code_for_session({"auth_code": code})  
+            session = supabase.auth.exchange_code_for_session({"auth_code": code})
             if session and session.user:
                 _set_session(session.user)
                 st.query_params.clear()
@@ -53,10 +54,7 @@ def handle_callback():
         except Exception as e:
             st.error(f"Google login error: {e}")
             st.query_params.clear()
-        
-       
 
-    # Restore session if already logged in (page refresh)
     if not st.session_state.logged_in:
         try:
             session = supabase.auth.get_session()
@@ -93,6 +91,59 @@ def login_ui():
                 st.warning("Please enter email and password.")
             else:
                 _do_login(email.strip(), password)
+
+        # ── FORGOT PASSWORD ──────────────────────────────────────────────────
+        st.markdown("<div style='height:0.3rem'></div>", unsafe_allow_html=True)
+
+        col_left, _ = st.columns([1, 2])
+        with col_left:
+            if st.button("Forgot password?", key="toggle_reset", type="secondary"):
+                st.session_state["_show_reset_form"] = not st.session_state.get(
+                    "_show_reset_form", False
+                )
+                st.session_state["_reset_result"] = None
+                st.rerun()
+
+        if st.session_state.get("_show_reset_form"):
+            st.markdown("---")
+            st.markdown("##### Reset your password")
+            st.caption("Enter your account email. We'll send a reset link.")
+
+            reset_email = st.text_input(
+                "Account email",
+                key="reset_email_input",
+                placeholder="you@example.com",
+                label_visibility="collapsed",
+            )
+
+            col_send, col_cancel = st.columns([2, 1])
+
+            with col_send:
+                if st.button("Send reset link", key="send_reset_btn",
+                             use_container_width=True, type="primary"):
+                    if not reset_email or "@" not in reset_email:
+                        st.session_state["_reset_result"] = (
+                            False, "Enter a valid email address."
+                        )
+                    else:
+                        ok, msg = _do_forgot_password(reset_email.strip())
+                        st.session_state["_reset_result"] = (ok, msg)
+                    st.rerun()
+
+            with col_cancel:
+                if st.button("Cancel", key="cancel_reset_btn",
+                             use_container_width=True):
+                    st.session_state["_show_reset_form"] = False
+                    st.session_state["_reset_result"] = None
+                    st.rerun()
+
+            result = st.session_state.get("_reset_result")
+            if result:
+                ok, msg = result
+                if ok:
+                    st.success(msg)
+                else:
+                    st.error(msg)
 
     # ── SIGN UP ──────────────────────────────────────────────────────────────
     with tab_signup:
@@ -198,3 +249,17 @@ def _do_google():
             )
     except Exception as e:
         st.error(f"Google login failed: {e}")
+
+
+def _do_forgot_password(email: str) -> tuple[bool, str]:
+    """
+    Calls Supabase reset_password_for_email.
+    Supabase sends a reset link to the address.
+    Returns (success: bool, message: str).
+    """
+    try:
+        supabase.auth.reset_password_for_email(email)
+        return True, "✅ Reset link sent! Check your inbox (and spam folder)."
+    except Exception as e:
+        msg = str(e)
+        return False, f"Failed to send reset link: {msg}"

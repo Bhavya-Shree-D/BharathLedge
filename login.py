@@ -11,6 +11,7 @@ Fixes applied:
   - _set_session() sets both 'username' and 'user_name' keys → main.py compatible
   - show_login_page() respects dark/light theme
   - No filesystem writes anywhere
+  - Forgot Password via Auth0 /dbconnections/change_password endpoint
 """
 
 import os
@@ -28,6 +29,8 @@ CLIENT_ID       = os.getenv("AUTH0_CLIENT_ID")
 CLIENT_SECRET   = os.getenv("AUTH0_CLIENT_SECRET")
 CALLBACK_URL    = os.getenv("AUTH0_REDIRECT_URI",        "http://localhost:8501")
 LOGOUT_REDIRECT = os.getenv("AUTH0_LOGOUT_REDIRECT_URI", "http://localhost:8501")
+# The Auth0 database connection name — default is "Username-Password-Authentication"
+AUTH0_DB_CONNECTION = os.getenv("AUTH0_DB_CONNECTION", "Username-Password-Authentication")
 
 # ── Fail fast if Auth0 is misconfigured ───────────────────────
 if not all([AUTH0_DOMAIN, CLIENT_ID, CLIENT_SECRET]):
@@ -95,7 +98,102 @@ def _get_login_urls() -> dict:
     return st.session_state["auth_urls"]
 
 
-# ── Callback handler ───────────────────────────────────────────
+# ── Forgot Password ────────────────────────────────────────────
+
+def _send_password_reset(email: str) -> tuple[bool, str]:
+    """
+    Calls Auth0 /dbconnections/change_password.
+    Auth0 sends a reset email to the address regardless of whether it exists
+    (by design, to prevent user enumeration).
+
+    Returns (success: bool, message: str).
+    """
+    try:
+        res = requests.post(
+            f"https://{AUTH0_DOMAIN}/dbconnections/change_password",
+            json={
+                "client_id":  CLIENT_ID,
+                "email":      email.strip(),
+                "connection": AUTH0_DB_CONNECTION,
+            },
+            timeout=10,
+        )
+        # Auth0 returns 200 with plain-text body on success
+        if res.status_code == 200:
+            return True, "Password reset email sent. Check your inbox."
+        else:
+            return False, f"Auth0 error {res.status_code}: {res.text}"
+    except requests.exceptions.Timeout:
+        return False, "Request timed out. Please try again."
+    except Exception as e:
+        return False, f"Unexpected error: {e}"
+
+
+def _show_forgot_password_form(is_dark: bool, sub_color: str) -> None:
+    """
+    Renders an inline forgot-password form below the login buttons.
+    Uses session_state flags so it doesn't break Streamlit's widget loop.
+    """
+    # Toggle link
+    st.markdown(
+        f"<div style='text-align:center;margin-top:0.6rem'>"
+        f"<span style='font-size:0.72rem;color:{sub_color}'>Forgot your password? </span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    if st.button(
+        "Send reset link",
+        key="forgot_pw_toggle",
+        use_container_width=False,
+        type="secondary",
+    ):
+        # Toggle the form visibility
+        st.session_state["_show_reset_form"] = not st.session_state.get(
+            "_show_reset_form", False
+        )
+        # Clear any previous result when toggling
+        st.session_state.pop("_reset_result", None)
+        st.rerun()
+
+    if st.session_state.get("_show_reset_form"):
+        st.markdown("<div style='height:0.4rem'></div>", unsafe_allow_html=True)
+
+        reset_email = st.text_input(
+            "Enter your account email",
+            key="reset_email_input",
+            placeholder="you@example.com",
+            label_visibility="collapsed",
+        )
+
+        col_send, col_cancel = st.columns([2, 1])
+
+        with col_send:
+            if st.button("Send email", key="send_reset_btn", use_container_width=True):
+                if not reset_email or "@" not in reset_email:
+                    st.session_state["_reset_result"] = (False, "Enter a valid email address.")
+                else:
+                    ok, msg = _send_password_reset(reset_email)
+                    st.session_state["_reset_result"] = (ok, msg)
+                st.rerun()
+
+        with col_cancel:
+            if st.button("Cancel", key="cancel_reset_btn", use_container_width=True):
+                st.session_state["_show_reset_form"] = False
+                st.session_state.pop("_reset_result", None)
+                st.rerun()
+
+        # Show result from previous rerun
+        result = st.session_state.get("_reset_result")
+        if result:
+            ok, msg = result
+            if ok:
+                st.success(msg)
+            else:
+                st.error(msg)
+
+
+# Callback handler
 
 def handle_callback() -> None:
     """
@@ -105,14 +203,14 @@ def handle_callback() -> None:
     """
     params = st.query_params
 
-    # ── Auth0 returned an error ────────────────────────────────
+    # ── Auth0 returned an error
     if "error" in params:
         error       = params.get("error", "unknown_error")
         description = params.get("error_description", "")
         st.session_state.pop("auth_urls", None)
         st.query_params.clear()
         st.error(f"Login failed: {description or error}")
-        st.rerun()   # rerun cleanly — no conditional st.button needed
+        st.rerun()
         return
 
     code           = params.get("code")
@@ -122,7 +220,6 @@ def handle_callback() -> None:
         return  # not a callback — normal page load
 
     # ── Verify CSRF state ──────────────────────────────────────
-    # AFTER — only rejects a genuine state mismatch
     saved_state = _pop_state()
     if saved_state and returned_state != saved_state:
         st.session_state.pop("auth_urls", None)
@@ -130,8 +227,6 @@ def handle_callback() -> None:
         st.error("Session expired or invalid state. Please log in again.")
         st.rerun()
         return
-# If saved_state is None, session was lost on navigation — proceed anyway.
-# Auth0 already validated state on its end before issuing the code.
 
     # ── Exchange code for tokens ───────────────────────────────
     try:
@@ -199,11 +294,10 @@ def handle_callback() -> None:
 # ── Login page UI ──────────────────────────────────────────────
 
 def show_login_page() -> None:
-    """Render the branded login page with Log in / Sign up / Google buttons."""
+    """Render the branded login page with Log in / Sign up / Google / Forgot Password."""
 
     is_dark = st.session_state.get("theme", "light") == "dark"
 
-    # Colors adapt to theme
     bg_color     = "#0F172A" if is_dark else "#F0F4F8"
     card_bg      = "#1E293B" if is_dark else "#FFFFFF"
     title_color  = "#F1F5F9" if is_dark else "#0F172A"
@@ -254,6 +348,22 @@ def show_login_page() -> None:
         .google-btn .stLinkButton a:hover{{
             background:{"#263548" if is_dark else "#F8FAFC"}!important;
         }}
+
+        /* Forgot password toggle button — minimal ghost style */
+        div[data-testid="stButton"] button[kind="secondary"]{{
+            background:transparent!important;
+            border:none!important;
+            color:#0D9488!important;
+            font-size:0.72rem!important;
+            padding:0!important;
+            text-decoration:underline!important;
+            cursor:pointer!important;
+            box-shadow:none!important;
+        }}
+        div[data-testid="stButton"] button[kind="secondary"]:hover{{
+            color:#0F766E!important;
+            background:transparent!important;
+        }}
         </style>
     """, unsafe_allow_html=True)
 
@@ -291,6 +401,9 @@ def show_login_page() -> None:
         st.link_button("Log in",  url=urls["login"],  use_container_width=True)
         st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
         st.link_button("Sign up", url=urls["signup"], use_container_width=True)
+
+        # ── Forgot Password ────────────────────────────────────
+        _show_forgot_password_form(is_dark, sub_color)
 
         # Divider
         st.markdown(
@@ -333,7 +446,6 @@ def logout() -> None:
     if email:
         db.add_history(email, "System", "Logout")
 
-    # Clear everything — feature chat history, language prefs, all of it
     st.session_state.clear()
 
     logout_url = (
@@ -341,7 +453,6 @@ def logout() -> None:
         f"?client_id={CLIENT_ID}"
         f"&returnTo={LOGOUT_REDIRECT}"
     )
-    # <meta refresh> works in Streamlit; <script> is sandboxed and unreliable
     st.markdown(
         f'<meta http-equiv="refresh" content="0; url={logout_url}">',
         unsafe_allow_html=True,
