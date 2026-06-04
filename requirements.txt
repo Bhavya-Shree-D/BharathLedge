@@ -1,7 +1,7 @@
 # core data
-numpy==1.26.4
-pandas==2.2.2
-pyarrow==16.1.0
+numpy>=2.1.0
+pandas>=2.2.3
+pyarrow>=17.0.0
 
 # data sources
 yfinance==0.2.40
