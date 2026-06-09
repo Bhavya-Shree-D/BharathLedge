@@ -40,7 +40,7 @@ _UI_TEXT_DEFAULT: dict = {
     "b2":           "Currency Trends",
     "b3":           "ForEx QA",
     "b4":           "Currency Calculator",
-    "b5":           "Multilingual & Voice",
+    "b5":           "Multilingual",
     "b6":           "My History",
     "back":         "← Back to Dashboard",
     "history":      "Activity History",
@@ -354,41 +354,38 @@ def _back_btn() -> None:
         st.rerun()
 
 
-_reg = get_feature_registry()
+_page = st.session_state["current_page"]
 
-# Trends
-if st.session_state["current_page"] == "trends":
-    _back_btn()
-    _reg["trends"](db=db, T=_T)
+if _page != "dashboard":
+    _reg = get_feature_registry()
 
-# ForEx QA
-elif st.session_state["current_page"] == "qa":
-    _back_btn()
-    _reg["qa"](db=db, T=_T)
+    if _page == "trends":
+        _back_btn()
+        _reg["trends"](db=db, T=_T)
 
-# Currency Calculator
-elif st.session_state["current_page"] == "calculator":
-    _back_btn()
-    _reg["calculator"](db=db, T=_T)
+    elif _page == "qa":
+        _back_btn()
+        _reg["qa"](db=db, T=_T)
 
-# INR Forecasting
-elif st.session_state["current_page"] == "forecast":
-    _back_btn()
-    _reg["forecast"](db=db, T=_T)
+    elif _page == "calculator":
+        _back_btn()
+        _reg["calculator"](db=db, T=_T)
 
-# History
-elif st.session_state["current_page"] == "history":
-    _back_btn()
-    _reg["history"](db=db, T=_T)
+    elif _page == "forecast":
+        _back_btn()
+        _reg["forecast"](db=db, T=_T)
 
-# Multilingual & Voice
-elif st.session_state["current_page"] == "multilingual":
-    _back_btn()
-    st.markdown(
-        '<div class="content-page-header">'
-        '<span style="font-size:1.4rem">🌐</span>'
-        f'<div class="content-page-title">{_T["b5"]}</div>'
-        '</div>',
-        unsafe_allow_html=True
-    )
-    _reg["multilingual"]()
+    elif _page == "history":
+        _back_btn()
+        _reg["history"](db=db, T=_T)
+
+    elif _page == "multilingual":
+        _back_btn()
+        st.markdown(
+            '<div class="content-page-header">'
+            '<span style="font-size:1.4rem">🌐</span>'
+            f'<div class="content-page-title">{_T["b5"]}</div>'
+            '</div>',
+            unsafe_allow_html=True
+        )
+        _reg["multilingual"]()

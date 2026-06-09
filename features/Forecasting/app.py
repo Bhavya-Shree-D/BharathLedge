@@ -72,7 +72,7 @@ def render(db, T: dict) -> None:
     as_of = df["as_of_date"].iloc[0]
     st.caption(f"Predictions as of **{as_of}** · Cached for 1 hour · Powered by LightGBM")
 
-    # ── Pair selector ──────────────────────────────────────────
+    # ── Pair selector 
     pair = st.radio(
         "Select currency pair",
         options=list(_PAIR_LABELS.keys()),
@@ -150,7 +150,7 @@ def render(db, T: dict) -> None:
         "but past performance does not guarantee future results."
     )
 
-    # ── Log to history ─────────────────────────────────────────
+    # Log to history 
     try:
         email = st.session_state.get("user_email", "")
         if email:
