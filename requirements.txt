@@ -8,7 +8,7 @@ yfinance==0.2.40
 fredapi==0.5.2
 
 # model
-lightgbm==4.3.0
+lightgbm==4.5.0
 scikit-learn==1.5.0
 shap==0.45.1
 
